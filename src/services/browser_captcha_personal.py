@@ -316,14 +316,19 @@ class BrowserCaptchaService:
         debug_logger.log_info(f"[BrowserCaptcha] 启动常驻模式，访问页面: {website_url}")
         
         # 创建一个独立的新标签页（不使用 main_tab，避免被回收）
-        self.resident_tab = await self.browser.get(website_url, new_tab=True)
+        # Open blank tab first, set up proxy auth, then navigate
+        self.resident_tab = await self.browser.get("about:blank", new_tab=True)
 
-        # Set up proxy auth on resident tab if needed
+        # Set up proxy auth BEFORE navigating to the real URL
         if self._proxy_username:
             try:
                 await self._setup_proxy_auth(self.resident_tab)
+                debug_logger.log_info("[BrowserCaptcha] Proxy auth set up on resident tab")
             except Exception as e:
                 debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup on resident tab failed: {e}")
+
+        # Now navigate to the actual URL
+        await self.resident_tab.get(website_url)
 
         debug_logger.log_info("[BrowserCaptcha] 标签页已创建，等待页面加载...")
         
@@ -588,15 +593,18 @@ class BrowserCaptchaService:
             website_url = f"https://labs.google/fx/tools/flow/project/{project_id}"
             debug_logger.log_info(f"[BrowserCaptcha] 为 project_id={project_id} 创建常驻标签页，访问: {website_url}")
             
-            # 创建新标签页
-            tab = await self.browser.get(website_url, new_tab=True)
+            # Create blank tab first, set up proxy auth, then navigate
+            tab = await self.browser.get("about:blank", new_tab=True)
 
-            # Set up proxy auth on new tab if needed
+            # Set up proxy auth BEFORE navigating to the real URL
             if self._proxy_username:
                 try:
                     await self._setup_proxy_auth(tab)
                 except Exception as e:
                     debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup on resident tab failed: {e}")
+
+            # Navigate to the actual URL
+            await tab.get(website_url)
 
             # 等待页面加载完成
             page_loaded = False
@@ -679,15 +687,18 @@ class BrowserCaptchaService:
             website_url = f"https://labs.google/fx/tools/flow/project/{project_id}"
             debug_logger.log_info(f"[BrowserCaptcha] [Legacy] 访问页面: {website_url}")
 
-            # 新建标签页并访问页面
-            tab = await self.browser.get(website_url)
+            # Open blank tab, set up proxy auth, then navigate
+            tab = await self.browser.get("about:blank", new_tab=True)
 
-            # Set up proxy auth on legacy tab if needed
+            # Set up proxy auth BEFORE navigating
             if self._proxy_username:
                 try:
                     await self._setup_proxy_auth(tab)
                 except Exception as e:
                     debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup on legacy tab failed: {e}")
+
+            # Navigate to the actual URL
+            await tab.get(website_url)
 
             # 等待页面完全加载（增加等待时间）
             debug_logger.log_info("[BrowserCaptcha] [Legacy] 等待页面加载...")
