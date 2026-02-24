@@ -183,7 +183,6 @@ class BrowserCaptchaService:
 
     async def initialize(self):
         """初始化 nodriver 浏览器"""
-        print(f"[PROXY-DEBUG] initialize() called, _initialized={self._initialized}, browser={self.browser is not None}, db={self.db is not None}")
         # 检查服务是否可用
         self._check_available()
         
@@ -222,7 +221,6 @@ class BrowserCaptchaService:
             if self.db:
                 try:
                     captcha_config = await self.db.get_captcha_config()
-                    print(f"[PROXY-DEBUG] captcha_config: enabled={getattr(captcha_config, 'browser_proxy_enabled', '?')}, url={getattr(captcha_config, 'browser_proxy_url', '?')}")
                     if captcha_config and captcha_config.browser_proxy_enabled and captcha_config.browser_proxy_url:
                         proxy_url = captcha_config.browser_proxy_url.strip()
                         import re
@@ -231,7 +229,6 @@ class BrowserCaptchaService:
                         if match:
                             proxy_server = match.group(1)
                             browser_args.append(f'--proxy-server=http://{proxy_server}')
-                            print(f"[PROXY-DEBUG] Chrome --proxy-server=http://{proxy_server}")
                             debug_logger.log_info(f"[BrowserCaptcha] Using proxy: {proxy_server}")
 
                             # Extract auth credentials if present
