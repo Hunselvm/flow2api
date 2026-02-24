@@ -145,6 +145,9 @@ class BrowserCaptchaService:
         self.db = db
         # 持久化 profile 目录
         self.user_data_dir = os.path.join(os.getcwd(), "browser_data")
+        # Proxy auth credentials (set during initialize if proxy configured)
+        self._proxy_username: Optional[str] = None
+        self._proxy_password: Optional[str] = None
         
         # 常驻模式相关属性 (支持多 project_id)
         self._resident_tabs: dict[str, 'ResidentTabInfo'] = {}  # project_id -> 常驻标签页信息
@@ -202,20 +205,56 @@ class BrowserCaptchaService:
             # 确保 user_data_dir 存在
             os.makedirs(self.user_data_dir, exist_ok=True)
 
+            # Build browser args
+            browser_args = [
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-setuid-sandbox',
+                '--disable-gpu',
+                '--window-size=1280,720',
+                '--profile-directory=Default',  # 跳过 Profile 选择器页面
+            ]
+
+            # Add proxy if configured (same proxy as API requests for IP match)
+            self._proxy_username = None
+            self._proxy_password = None
+            if self.db:
+                try:
+                    captcha_config = await self.db.get_captcha_config()
+                    if captcha_config and captcha_config.browser_proxy_enabled and captcha_config.browser_proxy_url:
+                        proxy_url = captcha_config.browser_proxy_url.strip()
+                        import re
+                        # Extract host:port (strip scheme and auth)
+                        match = re.match(r'^(?:https?://)?(?:[^:]+:[^@]+@)?([^:]+:\d+)$', proxy_url)
+                        if match:
+                            proxy_server = match.group(1)
+                            browser_args.append(f'--proxy-server=http://{proxy_server}')
+                            debug_logger.log_info(f"[BrowserCaptcha] Using proxy: {proxy_server}")
+
+                            # Extract auth credentials if present
+                            auth_match = re.match(r'^(?:https?://)?([^:]+):([^@]+)@', proxy_url)
+                            if auth_match:
+                                self._proxy_username = auth_match.group(1)
+                                self._proxy_password = auth_match.group(2)
+                                debug_logger.log_info(f"[BrowserCaptcha] Proxy auth configured for user: {self._proxy_username}")
+                except Exception as e:
+                    debug_logger.log_warning(f"[BrowserCaptcha] Failed to load proxy config: {e}")
+
             # 启动 nodriver 浏览器
             self.browser = await uc.start(
                 headless=self.headless,
                 user_data_dir=self.user_data_dir,
                 sandbox=False,  # nodriver 需要此参数来禁用 sandbox
-                browser_args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--window-size=1280,720',
-                    '--profile-directory=Default',  # 跳过 Profile 选择器页面
-                ]
+                browser_args=browser_args
             )
+
+            # Set up proxy auth on main tab if needed
+            if self._proxy_username:
+                try:
+                    await self._setup_proxy_auth(self.browser.main_tab)
+                    debug_logger.log_info("[BrowserCaptcha] Proxy auth enabled on main tab")
+                except Exception as e:
+                    debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup warning: {e}")
 
             self._initialized = True
             debug_logger.log_info(f"[BrowserCaptcha] ✅ nodriver 浏览器已启动 (Profile: {self.user_data_dir})")
@@ -223,6 +262,39 @@ class BrowserCaptchaService:
         except Exception as e:
             debug_logger.log_error(f"[BrowserCaptcha] ❌ 浏览器启动失败: {str(e)}")
             raise
+
+    # ========== Proxy Auth via CDP ==========
+
+    async def _setup_proxy_auth(self, tab):
+        """Set up proxy authentication via CDP Fetch.AuthRequired event.
+
+        Chrome's --proxy-server flag doesn't support inline credentials,
+        so we intercept 407 Proxy Auth Required challenges via CDP and
+        provide credentials programmatically.
+        """
+        if not self._proxy_username or not self._proxy_password:
+            return
+
+        username = self._proxy_username
+        password = self._proxy_password
+
+        async def handle_auth_required(event):
+            try:
+                await tab.send(uc.cdp.fetch.continue_with_auth(
+                    request_id=event.request_id,
+                    auth_challenge_response=uc.cdp.fetch.AuthChallengeResponse(
+                        response='ProvideCredentials',
+                        username=username,
+                        password=password,
+                    )
+                ))
+            except Exception as e:
+                debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth handler error: {e}")
+
+        tab.add_handler(uc.cdp.fetch.AuthRequired, handle_auth_required)
+        await tab.send(uc.cdp.fetch.enable(
+            handle_auth_requests=True
+        ))
 
     # ========== 常驻模式 API ==========
 
@@ -245,7 +317,14 @@ class BrowserCaptchaService:
         
         # 创建一个独立的新标签页（不使用 main_tab，避免被回收）
         self.resident_tab = await self.browser.get(website_url, new_tab=True)
-        
+
+        # Set up proxy auth on resident tab if needed
+        if self._proxy_username:
+            try:
+                await self._setup_proxy_auth(self.resident_tab)
+            except Exception as e:
+                debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup on resident tab failed: {e}")
+
         debug_logger.log_info("[BrowserCaptcha] 标签页已创建，等待页面加载...")
         
         # 等待页面加载完成（带重试机制）
@@ -511,7 +590,14 @@ class BrowserCaptchaService:
             
             # 创建新标签页
             tab = await self.browser.get(website_url, new_tab=True)
-            
+
+            # Set up proxy auth on new tab if needed
+            if self._proxy_username:
+                try:
+                    await self._setup_proxy_auth(tab)
+                except Exception as e:
+                    debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup on resident tab failed: {e}")
+
             # 等待页面加载完成
             page_loaded = False
             for retry in range(60):
@@ -595,6 +681,13 @@ class BrowserCaptchaService:
 
             # 新建标签页并访问页面
             tab = await self.browser.get(website_url)
+
+            # Set up proxy auth on legacy tab if needed
+            if self._proxy_username:
+                try:
+                    await self._setup_proxy_auth(tab)
+                except Exception as e:
+                    debug_logger.log_warning(f"[BrowserCaptcha] Proxy auth setup on legacy tab failed: {e}")
 
             # 等待页面完全加载（增加等待时间）
             debug_logger.log_info("[BrowserCaptcha] [Legacy] 等待页面加载...")

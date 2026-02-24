@@ -22,14 +22,14 @@ mask_token = true
 
 [proxy]
 proxy_enabled = false
-proxy_url = ""
+proxy_url = ""  # e.g. socks5://user:pass@proxy.oxylabs.io:1080
 
 [generation]
 image_timeout = 300
 video_timeout = 1500
 
 [admin]
-error_ban_threshold = 3
+error_ban_threshold = 50
 
 [cache]
 enabled = false
@@ -37,6 +37,8 @@ timeout = 7200  # 缓存超时时间(秒), 默认2小时
 base_url = ""   # 缓存文件访问的基础URL, 留空则使用服务器地址
 
 [captcha]
-captcha_method = "browser"  # 打码方式: yescaptcha 或 browser
-yescaptcha_api_key = ""  # YesCaptcha API密钥
+captcha_method = "browser"  # captcha method: yescaptcha or browser
+yescaptcha_api_key = ""
 yescaptcha_base_url = "https://api.yescaptcha.com"
+browser_proxy_enabled = false
+browser_proxy_url = ""  # Must match [proxy].proxy_url so captcha IP matches request IP
