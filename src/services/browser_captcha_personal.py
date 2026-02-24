@@ -183,6 +183,7 @@ class BrowserCaptchaService:
 
     async def initialize(self):
         """初始化 nodriver 浏览器"""
+        print(f"[PROXY-DEBUG] initialize() called, _initialized={self._initialized}, browser={self.browser is not None}, db={self.db is not None}")
         # 检查服务是否可用
         self._check_available()
         
