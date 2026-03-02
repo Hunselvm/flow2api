@@ -517,6 +517,117 @@ class BrowserCaptchaService:
             
     async def open_login_browser(self): return {"success": False, "error": "Not implemented"}
     async def create_browser_for_token(self, t, s=None): pass
+    async def get_custom_score(
+        self,
+        website_url: str = "https://antcpt.com/score_detector/",
+        website_key: str = "6LcR_okUAAAAAPYrPe-HK_0RULO1aZM15ENyM-Mf",
+        verify_url: str = "https://antcpt.com/score_detector/verify.php",
+        action: str = "homepage",
+        enterprise: bool = False,
+    ) -> tuple:
+        """Solve captcha on antcpt.com and read score from page DOM. Returns (payload_dict, browser_id)."""
+        token_start = time.time()
+        playwright = None
+        browser = None
+        context = None
+
+        try:
+            # Pick any TokenBrowser to get CDP connection
+            async with self._browsers_lock:
+                if not self._browsers:
+                    return {"token": None, "token_elapsed_ms": 0, "verify_mode": "browser_page",
+                            "verify_elapsed_ms": 0, "verify_http_status": None,
+                            "verify_result": {"success": False, "error": "No browsers available"}}, None
+                tb = next(iter(self._browsers.values()))
+
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.connect_over_cdp(tb.CDP_ENDPOINT)
+            contexts = browser.contexts
+            context = contexts[0] if contexts else await browser.new_context()
+            page = await context.new_page()
+
+            try:
+                # Navigate to the score detector page
+                await page.goto(website_url, wait_until="load", timeout=30000)
+                token_elapsed_ms = int((time.time() - token_start) * 1000)
+
+                # Wait for score to appear (antcpt auto-solves reCAPTCHA)
+                verify_start = time.time()
+                score = None
+                raw_text = ""
+                for _ in range(50):  # up to 25 seconds
+                    await asyncio.sleep(0.5)
+                    result = await page.evaluate("""
+                        (() => {
+                            const bodyText = ((document.body && document.body.innerText) || "")
+                                .replace(/\\u00a0/g, " ").replace(/\\r/g, "");
+                            const patterns = [
+                                { source: "current_score", regex: /Your score is:\\s*([01](?:\\.\\d+)?)/i },
+                                { source: "selected_score", regex: /Selected Score Test:[\\s\\S]{0,400}?Score:\\s*([01](?:\\.\\d+)?)/i },
+                                { source: "history_score", regex: /(?:^|\\n)\\s*Score:\\s*([01](?:\\.\\d+)?)\\s*;/i },
+                            ];
+                            let score = null; let source = "";
+                            for (const item of patterns) {
+                                const match = bodyText.match(item.regex);
+                                if (!match) continue;
+                                const parsed = Number(match[1]);
+                                if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+                                    score = parsed; source = item.source; break;
+                                }
+                            }
+                            const uaMatch = bodyText.match(/Current User Agent:\\s*([^\\n]+)/i);
+                            const ipMatch = bodyText.match(/Current IP Address:\\s*([^\\n]+)/i);
+                            return { score, source, raw_text: bodyText.slice(0, 4000),
+                                     current_user_agent: uaMatch ? uaMatch[1].trim() : "",
+                                     current_ip_address: ipMatch ? ipMatch[1].trim() : "" };
+                        })()
+                    """)
+                    if isinstance(result, dict):
+                        raw_text = result.get("raw_text", "")
+                        s = result.get("score")
+                        if isinstance(s, (int, float)):
+                            score = s
+                            verify_elapsed_ms = int((time.time() - verify_start) * 1000)
+                            return {
+                                "token": "score_test",
+                                "token_elapsed_ms": token_elapsed_ms,
+                                "verify_mode": "browser_page_dom",
+                                "verify_elapsed_ms": verify_elapsed_ms,
+                                "verify_http_status": None,
+                                "verify_result": {
+                                    "success": True, "score": score,
+                                    "source": result.get("source", "antcpt_dom"),
+                                    "raw_text": raw_text,
+                                    "current_user_agent": result.get("current_user_agent", ""),
+                                    "current_ip_address": result.get("current_ip_address", ""),
+                                },
+                            }, 0
+
+                verify_elapsed_ms = int((time.time() - verify_start) * 1000)
+                return {
+                    "token": None, "token_elapsed_ms": token_elapsed_ms,
+                    "verify_mode": "browser_page_dom", "verify_elapsed_ms": verify_elapsed_ms,
+                    "verify_http_status": None,
+                    "verify_result": {"success": False, "score": None, "error": "Timeout reading score",
+                                      "raw_text": raw_text},
+                }, 0
+            finally:
+                try: await page.close()
+                except: pass
+        except Exception as e:
+            return {
+                "token": None, "token_elapsed_ms": int((time.time() - token_start) * 1000),
+                "verify_mode": "browser_page", "verify_elapsed_ms": 0, "verify_http_status": None,
+                "verify_result": {"success": False, "error": f"{type(e).__name__}: {str(e)[:300]}"},
+            }, None
+        finally:
+            try:
+                if browser: await browser.close()
+            except: pass
+            try:
+                if playwright: await playwright.stop()
+            except: pass
+
     async def get_fingerprint(self, browser_id: int = None):
         """CDP approach has no per-browser fingerprint — Chrome provides its own identity."""
         return None
