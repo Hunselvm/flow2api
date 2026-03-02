@@ -225,11 +225,9 @@ class TokenBrowser:
                 context = contexts[0]
             else:
                 context = await browser.new_context()
-            print(f"[BrowserCaptcha] Token-{self.token_id} connected to Chrome via CDP (contexts={len(contexts)})")
             debug_logger.log_info(f"[BrowserCaptcha] Token-{self.token_id} connected to Chrome via CDP")
             return playwright, browser, context
         except Exception as e:
-            print(f"[BrowserCaptcha] Token-{self.token_id} CDP connection failed: {type(e).__name__}: {str(e)[:200]}")
             debug_logger.log_error(f"[BrowserCaptcha] Token-{self.token_id} CDP connection failed: {type(e).__name__}: {str(e)[:200]}")
             try:
                 await playwright.stop()
@@ -274,9 +272,7 @@ class TokenBrowser:
             
             try:
                 await page.wait_for_function("typeof grecaptcha !== 'undefined'", timeout=15000)
-                print(f"[BrowserCaptcha] Token-{self.token_id} grecaptcha loaded OK")
             except Exception as e:
-                print(f"[BrowserCaptcha] Token-{self.token_id} grecaptcha NOT ready: {type(e).__name__}: {str(e)[:200]}")
                 debug_logger.log_warning(f"[BrowserCaptcha] Token-{self.token_id} grecaptcha 未就绪: {type(e).__name__}: {str(e)[:200]}")
                 return None
 
@@ -293,11 +289,9 @@ class TokenBrowser:
                 """, action),
                 timeout=30
             )
-            print(f"[BrowserCaptcha] Token-{self.token_id} captcha token obtained: {bool(token)}")
             return token
         except Exception as e:
             msg = f"{type(e).__name__}: {str(e)}"
-            print(f"[BrowserCaptcha] Token-{self.token_id} captcha FAILED: {msg[:200]}")
             debug_logger.log_warning(f"[BrowserCaptcha] Token-{self.token_id} 打码失败: {msg[:200]}")
             return None
         finally:
