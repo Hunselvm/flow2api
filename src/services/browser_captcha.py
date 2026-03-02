@@ -225,9 +225,11 @@ class TokenBrowser:
                 context = contexts[0]
             else:
                 context = await browser.new_context()
+            print(f"[BrowserCaptcha] Token-{self.token_id} connected to Chrome via CDP (contexts={len(contexts)})")
             debug_logger.log_info(f"[BrowserCaptcha] Token-{self.token_id} connected to Chrome via CDP")
             return playwright, browser, context
         except Exception as e:
+            print(f"[BrowserCaptcha] Token-{self.token_id} CDP connection failed: {type(e).__name__}: {str(e)[:200]}")
             debug_logger.log_error(f"[BrowserCaptcha] Token-{self.token_id} CDP connection failed: {type(e).__name__}: {str(e)[:200]}")
             try:
                 await playwright.stop()
@@ -238,7 +240,7 @@ class TokenBrowser:
         """Disconnect from Chrome (do NOT close browser/context - Chrome keeps running)"""
         try:
             if browser:
-                browser.close()
+                await browser.close()
         except: pass
         try:
             if playwright:
@@ -272,10 +274,12 @@ class TokenBrowser:
             
             try:
                 await page.wait_for_function("typeof grecaptcha !== 'undefined'", timeout=15000)
+                print(f"[BrowserCaptcha] Token-{self.token_id} grecaptcha loaded OK")
             except Exception as e:
+                print(f"[BrowserCaptcha] Token-{self.token_id} grecaptcha NOT ready: {type(e).__name__}: {str(e)[:200]}")
                 debug_logger.log_warning(f"[BrowserCaptcha] Token-{self.token_id} grecaptcha 未就绪: {type(e).__name__}: {str(e)[:200]}")
                 return None
-            
+
             token = await asyncio.wait_for(
                 page.evaluate(f"""
                     (actionName) => {{
@@ -289,9 +293,11 @@ class TokenBrowser:
                 """, action),
                 timeout=30
             )
+            print(f"[BrowserCaptcha] Token-{self.token_id} captcha token obtained: {bool(token)}")
             return token
         except Exception as e:
             msg = f"{type(e).__name__}: {str(e)}"
+            print(f"[BrowserCaptcha] Token-{self.token_id} captcha FAILED: {msg[:200]}")
             debug_logger.log_warning(f"[BrowserCaptcha] Token-{self.token_id} 打码失败: {msg[:200]}")
             return None
         finally:
@@ -517,7 +523,15 @@ class BrowserCaptchaService:
             
     async def open_login_browser(self): return {"success": False, "error": "Not implemented"}
     async def create_browser_for_token(self, t, s=None): pass
-    def get_stats(self): 
+    async def get_fingerprint(self, browser_id: int = None):
+        """CDP approach has no per-browser fingerprint — Chrome provides its own identity."""
+        return None
+
+    async def report_request_finished(self, browser_id: int = None):
+        """No-op for CDP approach — Chrome stays running between requests."""
+        pass
+
+    def get_stats(self):
         base_stats = {
             "total_solve_count": self._stats["gen_ok"],
             "total_error_count": self._stats["gen_fail"],
