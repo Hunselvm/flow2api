@@ -532,16 +532,9 @@ class BrowserCaptchaService:
         context = None
 
         try:
-            # Pick any TokenBrowser to get CDP connection
-            async with self._browsers_lock:
-                if not self._browsers:
-                    return {"token": None, "token_elapsed_ms": 0, "verify_mode": "browser_page",
-                            "verify_elapsed_ms": 0, "verify_http_status": None,
-                            "verify_result": {"success": False, "error": "No browsers available"}}, None
-                tb = next(iter(self._browsers.values()))
-
+            # Connect directly to Chrome CDP — no need for a TokenBrowser from the pool
             playwright = await async_playwright().start()
-            browser = await playwright.chromium.connect_over_cdp(tb.CDP_ENDPOINT)
+            browser = await playwright.chromium.connect_over_cdp(TokenBrowser.CDP_ENDPOINT)
             contexts = browser.contexts
             context = contexts[0] if contexts else await browser.new_context()
             page = await context.new_page()
