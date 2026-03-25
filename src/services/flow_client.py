@@ -2,6 +2,7 @@
 import asyncio
 import json
 import contextvars
+import re
 import time
 import uuid
 import random
@@ -228,10 +229,17 @@ class FlowClient:
         for key, value in self._default_client_headers.items():
             headers.setdefault(key, value)
 
-        # Log request
+        # Always log proxy routing (regardless of debug mode)
+        proxy_for_log = proxy_url.replace(re.search(r':([^:@]+)@', proxy_url).group(1), '***') if proxy_url and re.search(r':([^:@]+)@', proxy_url) else proxy_url
+        route_label = f"PROXIED ({proxy_for_log})" if proxy_url else "DIRECT"
+        short_url = url.split('?')[0][-80:] if url else url
+        debug_logger.log_info(f"[ROUTE] {method} {short_url} → {route_label}")
+        if not proxy_url:
+            debug_logger.log_warning(f"[ROUTE] WARNING: request to {short_url} is going DIRECT (no proxy)")
+
+        # Log request (detailed, debug only)
         if config.debug_enabled:
             if isinstance(fingerprint, dict):
-                proxy_for_log = proxy_url if proxy_url else "direct"
                 debug_logger.log_info(
                     f"[FINGERPRINT] 使用打码浏览器指纹提交请求: UA={headers.get('User-Agent', '')[:120]}, proxy={proxy_for_log}"
                 )

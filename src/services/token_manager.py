@@ -18,7 +18,7 @@ class TokenManager:
         self._lock = asyncio.Lock()
         self._project_lock = asyncio.Lock()
         self._refresh_futures: dict[int, asyncio.Task] = {}
-        self._project_pool_size = 4
+        self._project_pool_size = 1
 
     def _sort_projects(self, projects: List[Project]) -> List[Project]:
         """Sort projects in a stable order for round-robin selection."""
