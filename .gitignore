@@ -62,3 +62,11 @@ tmp/
 config/setting.toml
 config/setting_warp.toml
 config/setting_warp_example.toml
+
+# Chrome profiles (sensitive, large)
+captcha_profile/
+refresh_profiles/
+
+# flow2api databases
+flow2api.db
+flow.db
