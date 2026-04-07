@@ -37,8 +37,8 @@ class Token(BaseModel):
     video_enabled: bool = True
 
     # 并发限制
-    image_concurrency: int = -1  # -1表示无限制
-    video_concurrency: int = -1  # -1表示无限制
+    image_concurrency: int = 3
+    video_concurrency: int = 3
 
     # 打码代理（token 级，可覆盖全局浏览器打码代理）
     captcha_proxy_url: Optional[str] = None

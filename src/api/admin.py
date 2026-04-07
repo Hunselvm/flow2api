@@ -470,8 +470,8 @@ class AddTokenRequest(BaseModel):
     captcha_proxy_url: Optional[str] = None
     image_enabled: bool = True
     video_enabled: bool = True
-    image_concurrency: int = -1
-    video_concurrency: int = -1
+    image_concurrency: int = 3
+    video_concurrency: int = 3
 
 
 class UpdateTokenRequest(BaseModel):
@@ -549,8 +549,8 @@ class ImportTokenItem(BaseModel):
     captcha_proxy_url: Optional[str] = None
     image_enabled: bool = True
     video_enabled: bool = True
-    image_concurrency: int = -1
-    video_concurrency: int = -1
+    image_concurrency: int = 3
+    video_concurrency: int = 3
 
 
 class ImportTokensRequest(BaseModel):

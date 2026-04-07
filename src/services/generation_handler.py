@@ -829,16 +829,7 @@ class GenerationHandler:
                 f"✨ {'视频' if generation_type == 'video' else '图片'}生成任务已启动\n",
                 role="assistant"
             )
-            request_log_state["id"] = await self._log_request(
-                token_id=None,
-                operation=request_operation,
-                request_data=request_payload,
-                response_data={"status": "processing", "status_text": "started", "progress": 0, "request_id": request_id},
-                status_code=102,
-                duration=0,
-                status_text="started",
-                progress=0,
-            )
+            # Note: log entry is created after token selection (below) to avoid ghost entries
 
         # 2. 选择Token
         debug_logger.log_info(f"[GENERATION] 正在选择可用Token...")
@@ -861,6 +852,20 @@ class GenerationHandler:
                 track_pending=True,
             )
         perf_trace["token_select_ms"] = int((time.time() - token_select_started_at) * 1000)
+
+        # Wait for a concurrency slot (blocks until one frees up or timeout)
+        if token and self.concurrency_manager:
+            if generation_type == "image":
+                wait_timeout = config.flow_image_slot_wait_timeout or 900
+                acquired, waited_ms = await self.concurrency_manager.wait_acquire_image(token.id, wait_timeout)
+            else:
+                wait_timeout = config.flow_video_slot_wait_timeout or 480
+                acquired, waited_ms = await self.concurrency_manager.wait_acquire_video(token.id, wait_timeout)
+            if acquired:
+                debug_logger.log_info(f"[GENERATION] Concurrency slot acquired for token {token.id} (waited {waited_ms}ms)")
+            else:
+                debug_logger.log_warning(f"[GENERATION] Concurrency slot timeout for token {token.id} after {waited_ms}ms")
+                token = None  # Fall through to "no token" error
 
         if not token:
             error_msg = None
@@ -891,6 +896,20 @@ class GenerationHandler:
 
         debug_logger.log_info(f"[GENERATION] 已选择Token: {token.id} ({token.email})")
         pending_token_state["active"] = True
+
+        # Create the log entry now that we have the token (avoids ghost "Unknown" entries)
+        if stream and not request_log_state.get("id"):
+            request_log_state["id"] = await self._log_request(
+                token_id=token.id,
+                operation=request_operation,
+                request_data=request_payload,
+                response_data={"status": "processing", "status_text": "token_selected", "progress": 8, "request_id": request_id, "token_email": token.email},
+                status_code=102,
+                duration=0,
+                status_text="token_selected",
+                progress=8,
+            )
+
         await self._update_request_log_progress(
             request_log_state,
             token_id=token.id,
@@ -1108,6 +1127,11 @@ class GenerationHandler:
                 yield self._create_stream_chunk(f"❌ {error_msg}\n")
             yield self._create_error_response(error_msg, status_code=500)
         finally:
+            if token and self.concurrency_manager:
+                if generation_type == "image":
+                    await self.concurrency_manager.release_image(token.id)
+                else:
+                    await self.concurrency_manager.release_video(token.id)
             if pending_token_state.get("active") and token and self.load_balancer:
                 await self.load_balancer.release_pending(
                     token.id,

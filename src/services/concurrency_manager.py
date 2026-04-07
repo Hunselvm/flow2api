@@ -46,24 +46,23 @@ class ConcurrencyManager:
 
     async def can_use_image(self, token_id: int) -> bool:
         """
-        Check if token can be used for image generation
+        Check if token can be used for image generation (combined limit)
 
         Args:
             token_id: Token ID
 
         Returns:
-            True if token has available image concurrency, False if concurrency is 0
+            True if token has available concurrency, False if combined limit reached
         """
         async with self._lock:
             limit = self._image_limits.get(token_id)
-            # Missing limit means unlimited (-1)
             if limit is None:
                 return True
 
-            inflight = self._image_inflight.get(token_id, 0)
-            if inflight >= limit:
+            combined = self._image_inflight.get(token_id, 0) + self._video_inflight.get(token_id, 0)
+            if combined >= limit:
                 debug_logger.log_info(
-                    f"Token {token_id} image concurrency exhausted (inflight: {inflight}/{limit})"
+                    f"Token {token_id} image concurrency exhausted (combined: {combined}/{limit})"
                 )
                 return False
 
@@ -71,24 +70,23 @@ class ConcurrencyManager:
 
     async def can_use_video(self, token_id: int) -> bool:
         """
-        Check if token can be used for video generation
+        Check if token can be used for video generation (combined limit)
 
         Args:
             token_id: Token ID
 
         Returns:
-            True if token has available video concurrency, False if concurrency is 0
+            True if token has available concurrency, False if combined limit reached
         """
         async with self._lock:
             limit = self._video_limits.get(token_id)
-            # Missing limit means unlimited (-1)
             if limit is None:
                 return True
 
-            inflight = self._video_inflight.get(token_id, 0)
-            if inflight >= limit:
+            combined = self._image_inflight.get(token_id, 0) + self._video_inflight.get(token_id, 0)
+            if combined >= limit:
                 debug_logger.log_info(
-                    f"Token {token_id} video concurrency exhausted (inflight: {inflight}/{limit})"
+                    f"Token {token_id} video concurrency exhausted (combined: {combined}/{limit})"
                 )
                 return False
 
@@ -96,7 +94,7 @@ class ConcurrencyManager:
 
     async def acquire_image(self, token_id: int) -> bool:
         """
-        Acquire image concurrency slot
+        Acquire image concurrency slot (combined limit: image + video inflight)
 
         Args:
             token_id: Token ID
@@ -106,17 +104,15 @@ class ConcurrencyManager:
         """
         async with self._lock:
             limit = self._image_limits.get(token_id)
-            inflight = self._image_inflight.get(token_id, 0)
+            img_inflight = self._image_inflight.get(token_id, 0)
+            vid_inflight = self._video_inflight.get(token_id, 0)
+            combined = img_inflight + vid_inflight
 
-            if limit is not None and inflight >= limit:
+            if limit is not None and combined >= limit:
                 return False
 
-            new_inflight = inflight + 1
-            self._image_inflight[token_id] = new_inflight
-            if limit is None:
-                debug_logger.log_info(f"Token {token_id} acquired image slot (inflight: {new_inflight}, limit: unlimited)")
-            else:
-                debug_logger.log_info(f"Token {token_id} acquired image slot (inflight: {new_inflight}/{limit})")
+            self._image_inflight[token_id] = img_inflight + 1
+            debug_logger.log_info(f"Token {token_id} acquired image slot (img={img_inflight + 1}, vid={vid_inflight}, combined={combined + 1}/{limit or 'unlimited'})")
             return True
 
     async def wait_acquire_image(self, token_id: int, timeout_seconds: float) -> tuple[bool, int]:
@@ -155,7 +151,7 @@ class ConcurrencyManager:
 
     async def acquire_video(self, token_id: int) -> bool:
         """
-        Acquire video concurrency slot
+        Acquire video concurrency slot (combined limit: image + video inflight)
 
         Args:
             token_id: Token ID
@@ -165,17 +161,15 @@ class ConcurrencyManager:
         """
         async with self._lock:
             limit = self._video_limits.get(token_id)
-            inflight = self._video_inflight.get(token_id, 0)
+            img_inflight = self._image_inflight.get(token_id, 0)
+            vid_inflight = self._video_inflight.get(token_id, 0)
+            combined = img_inflight + vid_inflight
 
-            if limit is not None and inflight >= limit:
+            if limit is not None and combined >= limit:
                 return False
 
-            new_inflight = inflight + 1
-            self._video_inflight[token_id] = new_inflight
-            if limit is None:
-                debug_logger.log_info(f"Token {token_id} acquired video slot (inflight: {new_inflight}, limit: unlimited)")
-            else:
-                debug_logger.log_info(f"Token {token_id} acquired video slot (inflight: {new_inflight}/{limit})")
+            self._video_inflight[token_id] = vid_inflight + 1
+            debug_logger.log_info(f"Token {token_id} acquired video slot (img={img_inflight}, vid={vid_inflight + 1}, combined={combined + 1}/{limit or 'unlimited'})")
             return True
 
     async def release_image(self, token_id: int):
