@@ -70,3 +70,8 @@ refresh_profiles/
 # flow2api databases
 flow2api.db
 flow.db
+
+# test files
+test_*
+tests/__pycache__/
+*.har

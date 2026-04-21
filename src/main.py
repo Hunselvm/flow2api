@@ -46,6 +46,8 @@ async def lifespan(app: FastAPI):
 
     # 启动时统一把数据库配置同步到内存，避免 personal/brower 相关运行时配置遗漏。
     await db.reload_config_to_memory()
+    generation_handler.file_cache.set_timeout(config.cache_timeout)
+    cache_cleanup_enabled = await generation_handler.file_cache.refresh_cleanup_task()
     captcha_config = await db.get_captcha_config()
 
     # 尽量在浏览器服务启动前就拿到 token 快照，后续并发管理和预热共用。
@@ -64,15 +66,26 @@ async def lifespan(app: FastAPI):
             limit=warmup_limit,
         )
 
-        warmed_slots = await browser_service.warmup_resident_tabs(
-            warmup_project_ids,
-            limit=warmup_limit,
-        )
+        warmed_slots = []
+        warmup_error = None
+        try:
+            warmed_slots = await browser_service.warmup_resident_tabs(
+                warmup_project_ids,
+                limit=warmup_limit,
+            )
+        except Exception as e:
+            warmup_error = e
+            print(
+                "⚠ Browser captcha resident warmup failed: "
+                f"{type(e).__name__}: {e}"
+            )
         if warmed_slots:
             print(
                 f"✓ Browser captcha shared resident tabs warmed "
                 f"({len(warmed_slots)} slot(s), limit={warmup_limit})"
             )
+        elif warmup_error is not None:
+            print("⚠ Browser captcha resident warmup skipped for this startup")
         elif tokens:
             print("⚠ Browser captcha resident warmup skipped: no tab warmed successfully")
         else:
@@ -101,9 +114,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"⚠ Remote browser pool prefill failed: {e}")
 
-    # Start file cache cleanup task
-    await generation_handler.file_cache.start_cleanup_task()
-
     # Start 429 auto-unban task
     import asyncio
     async def auto_unban_task():
@@ -120,7 +130,10 @@ async def lifespan(app: FastAPI):
     print(f"✓ Database initialized")
     print(f"✓ Total tokens: {len(tokens)}")
     print(f"✓ Cache: {'Enabled' if config.cache_enabled else 'Disabled'} (timeout: {config.cache_timeout}s)")
-    print(f"✓ File cache cleanup task started")
+    if cache_cleanup_enabled:
+        print("✓ File cache cleanup task started")
+    else:
+        print("✓ File cache cleanup task disabled (timeout <= 0)")
     print(f"✓ 429 auto-unban task started (runs every hour)")
     print(f"✓ Server running on http://{config.server_host}:{config.server_port}")
     print("=" * 60)
@@ -228,3 +241,12 @@ async def manage_page():
     if manage_file.exists():
         return FileResponse(str(manage_file))
     return HTMLResponse(content="<h1>Management Page Not Found</h1>", status_code=404)
+
+
+@app.get("/test", response_class=HTMLResponse)
+async def test_page():
+    """Model testing page"""
+    test_file = static_path / "test.html"
+    if test_file.exists():
+        return FileResponse(str(test_file))
+    return HTMLResponse(content="<h1>Test Page Not Found</h1>", status_code=404)
